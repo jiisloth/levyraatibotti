@@ -1,12 +1,10 @@
 # This example requires the 'message_content' intent.
-import json
 import random
 
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
 
-import lib.gsheets as gs
 import configparser
 import os
 from tinytag import TinyTag
@@ -20,8 +18,6 @@ config = configReader['LEVYRAATI']
 if not config:
     print('Please give config')
     quit()
-
-gsheets = gs.Gsheets(config['SECRET_JSON_FILE_PATH'], config['SHEETNAME'])
 
 description = '''Another nice bot by a sloth'''
 
