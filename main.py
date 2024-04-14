@@ -87,9 +87,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if payload.message_id != songmessageid:
         return
     if payload.user_id in admins:
-        print(payload.emoji.name)
         if payload.emoji.name == "⏭️":
-            print("yess")
             await do_next(cctx)
     else:
         current_reacts.append(payload.emoji.name)
