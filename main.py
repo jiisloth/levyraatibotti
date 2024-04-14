@@ -32,13 +32,15 @@ intents.message_content = True
 client = discord.Client(intents=intents)
 bot = commands.Bot(command_prefix='/', description=description, intents=intents)
 
-running_run_id = 123
-randseed = str(random.randint(1, 99999999))
+randseed = 111
+startfrom = 1
 
 admins = [] #Add admin id's here
-songnumber = -1
-songmessageid = 0
+songnumber = 0
+songmessageid = -1
 current_reacts = []
+
+cctx = None
 
 @bot.event
 async def on_ready():
@@ -48,6 +50,7 @@ async def on_ready():
 
 @bot.command()
 async def start(ctx):
+    global cctx
     if ctx.author.id in admins:
         if str(ctx.channel) == text_channel or text_channel == "":
             """Joins a voice channel"""
@@ -55,40 +58,16 @@ async def start(ctx):
             if ctx.voice_client is not None:
                 return await ctx.voice_client.move_to(vc)
             await vc.connect()
+            cctx = ctx
 
 
 @bot.command()
 async def next(ctx):
-    global songnumber
-    global music
-    global songmessageid
-    global current_reacts
-    if ctx.author.id in admins:
-        if str(ctx.channel) == text_channel or text_channel == "":
-            """Plays a file from the local filesystem"""
-            if songnumber >= 0:
-                write_song_reacts()
-                current_reacts = []
-            songnumber += 1
-            if songnumber > len(music):
-                await ctx.send(f'All songs played! Going again!')
-                songnumber = 0
-                random.shuffle(music)
-            if ctx.voice_client.is_playing():
-                ctx.voice_client.stop()
-            song = music[songnumber]
-            file = music_dir + "/" + song["Path"] + "/" + song["Filename"]
-            source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(file))
-            ctx.voice_client.play(source, after=lambda e: print(f'Player error: {e}') if e else None)
-            ctx.voice_client.source.volume = 15 / 100
-            msg = song["Filename"]
-            if song["Artist"]:
-                msg = f'{song["Name"]} by {song["Artist"]}, ({timedelta(seconds=int(song["Duration"]))})'
-            sentmsg = await ctx.send(f'{songnumber+1}/{len(music)} Now playing: {msg}')
-            songmessageid = sentmsg.id
-
+    await do_next(ctx)
 
 def write_song_reacts():
+    if songmessageid < 0:
+        return
     song = music[songnumber]
     reacts = ", ".join(current_reacts)
     if song["Artist"]:
@@ -101,13 +80,58 @@ def write_song_reacts():
 
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    global cctx
     global current_reacts
     """Gives a role based on a reaction emoji."""
     # Make sure that the message the user is reacting to is the one we care about.
     if payload.message_id != songmessageid:
         return
-    current_reacts.append(payload.emoji.name)
+    if payload.user_id in admins:
+        print(payload.emoji.name)
+        if payload.emoji.name == "⏭️":
+            print("yess")
+            await do_next(cctx)
+    else:
+        current_reacts.append(payload.emoji.name)
 
+
+async def do_next(ctx):
+    global songnumber
+    global music
+    global songmessageid
+    global randseed
+    global current_reacts
+    global cctx
+    if ctx.author.id in admins:
+        if str(ctx.channel) == text_channel or text_channel == "":
+            """Plays a file from the local filesystem"""
+            while songnumber < startfrom - 1:
+                songnumber += 1
+            if songnumber >= len(music):
+                await ctx.send(f'All songs played! Going again!')
+                songnumber = 0
+                randseed += 1
+                random.Random(randseed).shuffle(music)
+
+            write_song_reacts()
+            current_reacts = []
+
+            if ctx.voice_client.is_playing():
+                ctx.voice_client.stop()
+            song = music[songnumber]
+            file = music_dir + "/" + song["Path"] + "/" + song["Filename"]
+            source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(file))
+            ctx.voice_client.play(source, after=lambda e: print(f'Player error: {e}') if e else None)
+            ctx.voice_client.source.volume = 15 / 100
+
+            msg = f'{song["Name"]} by {song["Artist"]}, {timedelta(seconds=int(song["Duration"]))}, {song["Filename"]}'
+
+            sentmsg = await ctx.send(f'{songnumber+1}/{len(music)} Äänestä ny!')
+            print(f'{songnumber+1}/{len(music)} Now playing: {msg}')
+            songmessageid = sentmsg.id
+
+            songnumber += 1
+            cctx = ctx
 
 @bot.event
 async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
@@ -115,15 +139,20 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
     # Make sure that the message the user is reacting to is the one we care about.
     if payload.message_id != songmessageid:
         return
-    current_reacts.remove(payload.emoji.name)
+    if payload.user_id in admins:
+        if payload.emoji.name == "⏭️":
+            return
+    else:
+        current_reacts.remove(payload.emoji.name)
 
 
 def get_music_files(root):
     songs = []
+    count = 0
     for path, subdirs, files in os.walk(root):
         for name in files:
             file = os.path.join(path, name)
-            f = {"Artist": None, "Name": None, "Duration": None, "Path": path[len(root)+1:], "Filename": name}
+            f = {"Artist": None, "Name": "", "Duration": 0, "Path": path[len(root)+1:], "Filename": name}
             try:
                 tag = TinyTag.get(file)
                 f["Artist"] = tag.artist
@@ -132,7 +161,17 @@ def get_music_files(root):
             except UnicodeDecodeError:
                 print(f'{file} sucks ass.')
             songs.append(f)
-    random.shuffle(songs)
+            if not f["Artist"]:
+                f["Artist"] = "Not Found"
+            if not f["Name"]:
+                f["Name"] = "Not Found"
+            if not f["Duration"]:
+                f["Duration"] = 0
+            msg = f'{f["Name"]} by {f["Artist"]}, {timedelta(seconds=int(f["Duration"]))}, {f["Filename"]}'
+            print(f'{count+1} Found: {msg}')
+            count += 1
+
+    random.Random(randseed).shuffle(songs)
     return songs
 
 music = get_music_files(music_dir)
